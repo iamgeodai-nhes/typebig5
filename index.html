@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#fffaf2" />
+  <title>注音探險隊｜台灣注音鍵盤練習</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page-glow glow-one"></div>
+  <div class="page-glow glow-two"></div>
+
+  <main class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="注音探險隊首頁">
+        <span class="brand-mark">ㄅ</span>
+        <span><b>注音探險隊</b><small>BOPO ADVENTURE</small></span>
+      </a>
+      <div class="top-help">
+        <span class="keyboard-only"><i></i> 實體鍵盤模式</span>
+        <span class="shortcut">空白鍵開始・ESC 暫停</span>
+      </div>
+    </header>
+
+    <section class="intro">
+      <div>
+        <p class="kicker">給六年級生的注音打字練習</p>
+        <h1>看見位置，<br><span>讓手指記住聲音。</span></h1>
+      </div>
+      <p class="intro-copy">使用台灣常見的標準注音鍵盤配置。跟著顏色找到正確手指，再用實體鍵盤接住每一個注音。</p>
+    </section>
+
+    <nav class="mode-tabs" aria-label="難度選擇">
+      <button class="mode-tab active" data-mode="basic">
+        <span class="mode-number">01</span>
+        <span><b>基礎練習</b><small>單一注音・認識鍵位</small></span>
+        <kbd>1</kbd>
+      </button>
+      <button class="mode-tab" data-mode="advanced">
+        <span class="mode-number">02</span>
+        <span><b>文章挑戰</b><small>完整語句・連續輸入</small></span>
+        <kbd>2</kbd>
+      </button>
+    </nav>
+
+    <section class="competition-bar">
+      <div class="player-field">
+        <label for="playerName">挑戰者名字</label>
+        <input id="playerName" maxlength="10" autocomplete="off" placeholder="輸入名字再開始" />
+        <button id="savePlayer" type="button">加入比賽</button>
+      </div>
+      <p id="playerGreeting">輸入名字後，每次成績都會加入排行榜。</p>
+      <button class="rank-jump" id="rankJump" type="button">查看排行榜 ↓</button>
+    </section>
+
+    <section class="practice-laptop">
+      <div class="laptop-camera" aria-hidden="true"></div>
+      <section class="game-grid">
+      <div class="game-card">
+        <div class="game-toolbar">
+          <div class="game-state"><i id="stateDot"></i><span id="stateText">準備開始</span></div>
+          <div class="round-progress"><span id="roundLabel">60 秒挑戰</span><b id="timer">01:00</b></div>
+        </div>
+
+        <div class="basic-stage" id="basicStage">
+          <div class="sky-deco cloud cloud-a"></div>
+          <div class="sky-deco cloud cloud-b"></div>
+          <div class="sky-deco star star-a">✦</div>
+          <div class="sky-deco star star-b">✦</div>
+          <div class="lane-dashes"></div>
+          <div class="target-line"><span>接住線</span></div>
+          <div class="falling-note" id="fallingNote"><b>ㄅ</b><small>1</small></div>
+          <div class="ready-panel" id="readyPanel">
+            <span class="ready-rocket">⌨</span>
+            <h2>把雙手放在鍵盤上</h2>
+            <p>食指放在 F、J 的凸點，按下空白鍵開始</p>
+            <span class="space-chip">SPACE</span>
+          </div>
+          <div class="result-panel" id="resultPanel" hidden>
+            <span class="result-badge">完成！</span>
+            <h2 id="resultTitle">這次接住 0 個注音</h2>
+            <p id="resultCopy">再練一次，讓手指更熟悉鍵盤位置。</p>
+            <span class="space-chip">按 SPACE 再玩一次</span>
+          </div>
+        </div>
+
+        <div class="advanced-stage" id="advancedStage" hidden>
+          <div class="article-visual" aria-hidden="true">
+            <span class="sun"></span><span class="school">學</span><span class="tree tree-one">♣</span><span class="tree tree-two">♣</span>
+          </div>
+          <div class="article-copy">
+            <div class="article-heading"><span>閱讀任務 <em id="articleProgress">已完成 0 / 30</em></span><b id="articleTitle">校園裡的早晨</b></div>
+            <div class="passage" id="passage"></div>
+          </div>
+          <div class="syllable-focus">
+            <span class="focus-label">現在輸入</span>
+            <div class="focus-character" id="focusCharacter">清</div>
+            <div class="focus-bopomofo" id="focusBopomofo"></div>
+            <p id="focusHint">依序輸入完整注音</p>
+          </div>
+          <div class="advanced-cover" id="advancedCover">
+            <span>進階任務</span>
+            <h2>讀文章，也練習正確鍵位</h2>
+            <p>中文字、注音與鍵盤位置會同步出現</p>
+            <span class="space-chip" id="advancedAction">按 SPACE 開始文章</span>
+          </div>
+        </div>
+        <div class="hit-feedback" id="hitFeedback">太棒了！ +10</div>
+
+        <div class="stats-strip">
+          <div><span>分數</span><b id="score">0</b></div>
+          <div><span>正確率</span><b id="accuracy">—</b></div>
+          <div><span>連擊</span><b id="combo">0</b></div>
+          <div><span id="fourthStatLabel">接住</span><b id="correct">0</b></div>
+        </div>
+      </div>
+
+      <aside class="coach-card">
+        <p class="coach-kicker">手指小教練</p>
+        <div class="coach-target">
+          <span class="coach-symbol" id="coachSymbol">ㄅ</span>
+          <div><small>請按下</small><b id="coachKey">1</b></div>
+        </div>
+        <div class="finger-callout" id="fingerCallout">
+          <i></i><span>使用左手小指</span>
+        </div>
+        <div class="hands" aria-hidden="true">
+          <div class="hand left-hand"><span class="pinky"></span><span class="ring"></span><span class="middle"></span><span class="index"></span><span class="thumb"></span></div>
+          <div class="hand right-hand"><span class="thumb"></span><span class="index"></span><span class="middle"></span><span class="ring"></span><span class="pinky"></span></div>
+        </div>
+        <p class="coach-tip" id="coachTip">看著下方發光的鍵位，用對應顏色的手指按下它。</p>
+        <div class="mistakes"><span>按錯次數</span><b id="wrong">0</b></div>
+      </aside>
+      </section>
+
+      <section class="keyboard-section">
+      <div class="section-heading">
+        <div><p class="kicker">TAIWAN STANDARD LAYOUT</p><h2>台灣標準注音鍵盤</h2></div>
+        <p><span class="pulse-dot"></span> 發光鍵位是現在要按的按鍵</p>
+      </div>
+      <div class="laptop-frame">
+        <div class="speaker speaker-left"></div><div class="speaker speaker-right"></div>
+        <div class="keyboard" id="keyboard" aria-label="台灣標準注音鍵盤視覺提示"></div>
+        <div class="trackpad"></div>
+      </div>
+      <p class="no-click-note">鍵盤圖僅供位置提示，無法用滑鼠點擊作答。</p>
+      </section>
+    </section>
+
+    <section class="leaderboard-section" id="leaderboardSection">
+      <div class="section-heading">
+        <div><p class="kicker">CLASS CHALLENGE</p><h2>本機挑戰排行榜</h2></div>
+        <div class="board-tabs"><button class="active" data-board="basic">基礎賽</button><button data-board="advanced">文章賽</button></div>
+      </div>
+      <div class="leaderboard" id="leaderboard"></div>
+      <p class="board-note">排行榜目前儲存在這台電腦的瀏覽器中，適合同一間教室輪流挑戰。</p>
+    </section>
+
+    <section class="finger-guide">
+      <div class="section-heading">
+        <div><p class="kicker">FINGER MAP</p><h2>每支手指負責哪些鍵？</h2></div>
+        <p>左右手相同手指使用同一種顏色</p>
+      </div>
+      <div class="finger-list" id="fingerList"></div>
+      <div class="home-row-tip"><b>定位小技巧</b><span>不用低頭找鍵盤：左右食指先摸到 <kbd>F</kbd>、<kbd>J</kbd> 上的小凸點，其他手指自然排開。</span></div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+  <script src="articles.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
