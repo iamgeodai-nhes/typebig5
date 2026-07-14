@@ -29,8 +29,10 @@ const punctuationPattern = /[，。！？、；：]/;
 const completionStorageKey = 'bopomofo-arcade-completed-v2';
 const leaderboardStorageKey = 'bopomofo-arcade-leaderboard-v1';
 const playerStorageKey = 'bopomofo-arcade-player-v1';
+const attemptStorageKey = 'bopomofo-arcade-attempts-v1';
 let memoryCompletedArticles = {};
 let memoryLeaderboard = { basic:[], advanced:[] };
+let memoryAttempts = [];
 let activeBoard = 'basic';
 let article = [];
 let currentArticleMeta = null;
@@ -69,6 +71,13 @@ function leaderboardData() {
   } catch { return memoryLeaderboard; }
 }
 
+function attemptData() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(attemptStorageKey) || '[]');
+    return Array.isArray(saved) ? saved : [];
+  } catch { return memoryAttempts; }
+}
+
 function playerName() { return $('playerName').value.trim().slice(0,10); }
 
 function savePlayerName(announce=true) {
@@ -86,7 +95,7 @@ function recordLeaderboardScore(mode) {
   const previous = boards[mode].find(entry => entry.name.toLocaleLowerCase('zh-TW') === name.toLocaleLowerCase('zh-TW'));
   if (previous && (previous.score > state.score || (previous.score === state.score && previous.accuracy >= accuracyNumber()))) { renderLeaderboard(activeBoard); return; }
   boards[mode] = boards[mode].filter(entry => entry.name.toLocaleLowerCase('zh-TW') !== name.toLocaleLowerCase('zh-TW'));
-  boards[mode].push({ name, score:state.score, accuracy:accuracyNumber(), date:new Date().toLocaleDateString('zh-TW'), article:mode === 'advanced' ? currentArticleMeta?.title : '60 秒挑戰' });
+  boards[mode].push({ name, score:state.score, accuracy:accuracyNumber(), date:formatDateTime(), article:mode === 'advanced' ? currentArticleMeta?.title : '60 秒挑戰' });
   boards[mode].sort((a,b) => b.score-a.score || b.accuracy-a.accuracy); boards[mode] = boards[mode].slice(0,10); memoryLeaderboard = boards;
   try { localStorage.setItem(leaderboardStorageKey,JSON.stringify(boards)); } catch { /* file:// fallback */ }
   renderLeaderboard(activeBoard);
@@ -199,6 +208,7 @@ function chooseMode(mode, announce=true) {
   $('advancedCover').querySelector('p').textContent = '中文字、注音與鍵盤位置會同步出現';
   $('advancedAction').textContent = '按 SPACE 開始文章';
   resetStats();
+  clearArticleFeedback();
   if (mode === 'basic') setTarget('1'); else selectRandomArticle();
   renderLeaderboard(mode);
   if (announce) showToast(mode === 'basic' ? '已切換：基礎練習' : '已切換：文章挑戰');
@@ -211,6 +221,7 @@ function startRound() {
   if (state.mode === 'advanced' && state.allArticlesComplete) { showAllArticlesComplete(); return; }
   if (state.mode === 'advanced' && state.needsNewArticle && !selectRandomArticle()) return;
   clearTimers(); resetStats(); state.running = true; state.paused = false; state.startedAt = Date.now();
+  clearArticleFeedback();
   $('stateDot').classList.add('running'); $('stateText').textContent = '練習進行中'; $('resultPanel').hidden = true;
   if (state.mode === 'basic') {
     state.remaining = 60; $('readyPanel').hidden = true; startClock(); nextBasicTarget();
@@ -262,9 +273,12 @@ function handleGameKey(pressed) {
 function hitBasic() {
   state.accepting = false;
   clearTimeout(state.missTimer);
-  const elapsed = performance.now() - state.noteStart; const closeness = Math.abs(elapsed / state.noteDuration - .82);
-  const base = closeness < .14 ? 15 : 10; state.combo++; state.correct++; state.bestCombo = Math.max(state.bestCombo,state.combo); state.score += base + Math.min(20,state.combo);
-  freezeFallingNote(); $('fallingNote').classList.add('hit'); showFeedback(`${randomPraise(closeness < .14)} +${base}`,true); updateStats();
+  const elapsed = performance.now() - state.noteStart;
+  const speedRatio = Math.max(0, Math.min(1, elapsed / state.noteDuration));
+  const base = Math.max(8, Math.round(26 - speedRatio * 18));
+  const fastHit = speedRatio <= .38;
+  state.combo++; state.correct++; state.bestCombo = Math.max(state.bestCombo,state.combo); state.score += base + Math.min(20,state.combo);
+  freezeFallingNote(); $('fallingNote').classList.add('hit'); showFeedback(`${randomPraise(fastHit)} +${base}`,true); updateStats();
   setTimeout(nextBasicTarget,260);
 }
 
@@ -279,7 +293,7 @@ function hitAdvanced() {
   if (state.syllableIndex >= current.keys.length) {
     state.articleIndex++; state.syllableIndex = 0;
     while (article[state.articleIndex]?.punctuation) state.articleIndex++;
-    showFeedback(`${randomPraise(false)} 完成一字！`,true);
+    showFeedback(`${randomPraise(false)} 下一字！`,true);
     if (state.articleIndex >= article.length) return finishRound();
   }
   updateArticle(); updateStats();
@@ -340,10 +354,10 @@ function finishRound() {
     const mastered = accuracyNumber() >= 80;
     if (mastered && currentArticleMeta) saveCompletedArticle(currentArticleMeta.id);
     state.needsNewArticle = true; updateArticleProgress(); $('advancedCover').hidden = false;
-    $('advancedCover').querySelector('h2').textContent = mastered ? '文章挑戰成功！' : '文章完成，再熟練一次！';
+    $('advancedCover').querySelector('h2').textContent = mastered ? '完成一篇文章！' : '完成一篇文章，再熟練一次！';
     $('advancedCover').querySelector('p').textContent = mastered
-      ? `正確率 ${accuracyNumber()}%，已加入完成紀錄，不會再抽到這一篇。`
-      : `正確率 ${accuracyNumber()}%，達到 80% 就會加入完成紀錄。`;
+      ? `正確率 ${accuracyNumber()}%，已加入完成紀錄；想保留這次挑戰，可按上方暫存成績。`
+      : `正確率 ${accuracyNumber()}%，達到 80% 才會加入完成紀錄；也可以先暫存這次成績。`;
     $('advancedAction').textContent = completedArticleIds().size >= articleLibrary.length ? '按 R 開啟新一輪' : '按 SPACE 隨機抽下一篇';
     if (completedArticleIds().size >= articleLibrary.length) state.allArticlesComplete = true;
   }
@@ -360,6 +374,34 @@ function resetArticleHistory() {
   $('advancedAction').textContent = '按 SPACE 開始文章'; updateArticleProgress(); showToast('文章完成紀錄已清除');
 }
 
+function saveAttemptSnapshot() {
+  const name = playerName();
+  if (!name) { $('playerName').focus(); showToast('先輸入挑戰者名字，才能暫存成績！'); return false; }
+  if (!state.score && !state.correct && !state.wrong) { showToast('先開始挑戰，再暫存成績喔！'); return false; }
+  const attempts = attemptData();
+  const modeName = state.mode === 'advanced' ? '文章挑戰' : '基礎練習';
+  const completedChars = state.mode === 'advanced' ? articleCompletedCount() : state.correct;
+  const totalChars = state.mode === 'advanced' ? articleTotalCount() : null;
+  const progress = state.mode === 'advanced' ? `${completedChars} / ${totalChars} 字` : `接住 ${state.correct} 個`;
+  const status = state.running ? (state.paused ? '暫停中' : '進行中') : '已完成';
+  attempts.unshift({
+    name,
+    mode:state.mode,
+    modeName,
+    score:state.score,
+    accuracy:accuracyNumber(),
+    article:state.mode === 'advanced' ? currentArticleMeta?.title || '文章挑戰' : '60 秒挑戰',
+    progress,
+    status,
+    date:formatDateTime()
+  });
+  memoryAttempts = attempts.slice(0,30);
+  try { localStorage.setItem(attemptStorageKey,JSON.stringify(memoryAttempts)); } catch { /* file:// fallback */ }
+  renderAttemptLog();
+  showToast('已暫存本次成績與時間');
+  return true;
+}
+
 function stopRound(finished) {
   clearTimers(); state.running = false; state.paused = false; state.accepting = false; $('stateDot').classList.remove('running'); $('stateText').textContent = finished ? '練習完成' : '準備開始'; $('fallingNote').className = 'falling-note';
 }
@@ -369,11 +411,42 @@ function resetStats() { state.score=0; state.correct=0; state.wrong=0; state.com
 function accuracyNumber() { return state.correct + state.wrong ? Math.round(state.correct/(state.correct+state.wrong)*100) : 0; }
 function updateStats() { $('score').textContent=state.score.toLocaleString(); $('accuracy').textContent=state.correct+state.wrong ? `${accuracyNumber()}%` : '—'; $('combo').textContent=state.combo; $('correct').textContent=state.mode==='advanced' ? Math.max(0,article.slice(0,state.articleIndex).filter(x=>!x.punctuation).length) : state.correct; $('wrong').textContent=state.wrong; }
 function formatTime(seconds) { return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`; }
+function formatDateTime(date=new Date()) { return date.toLocaleString('zh-TW',{ year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false }); }
+function articleCompletedCount() { return Math.max(0, article.slice(0,state.articleIndex).filter(item => !item.punctuation).length); }
+function articleTotalCount() { return article.filter(item => !item.punctuation).length; }
 function randomPraise(perfect=false) { const words = perfect ? ['神準命中！','完美到發光！','超級漂亮！'] : ['太強啦！','手速王！','你做到了！','繼續連擊！']; return words[Math.floor(Math.random()*words.length)]; }
 function randomEncouragement() { const words = ['沒關係，再試一次！','差一點點，你可以！','看準發光鍵，再來！','別放棄，下一次會中！']; return words[Math.floor(Math.random()*words.length)]; }
 function showFeedback(text,good) {
+  if (state.mode === 'advanced') {
+    showArticleFeedback(text,good);
+    const card=document.querySelector('.game-card'); card.classList.remove('celebrate','encourage'); void card.offsetWidth; card.classList.add(good?'celebrate':'encourage'); setTimeout(()=>card.classList.remove('celebrate','encourage'),600);
+    return;
+  }
   const el=$('hitFeedback'); el.textContent=text; el.style.color=good?'var(--purple)':'var(--coral)'; el.classList.toggle('bad',!good); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
   const card=document.querySelector('.game-card'); card.classList.remove('celebrate','encourage'); void card.offsetWidth; card.classList.add(good?'celebrate':'encourage'); setTimeout(()=>card.classList.remove('celebrate','encourage'),600);
+}
+function showArticleFeedback(text,good) {
+  const el = $('articleFeedback');
+  el.textContent = text;
+  el.classList.toggle('bad',!good);
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+}
+function clearArticleFeedback() {
+  const el = $('articleFeedback');
+  if (!el) return;
+  el.textContent = '準備開始！';
+  el.classList.remove('show','bad');
+}
+function renderAttemptLog() {
+  const log = $('attemptLog');
+  const attempts = attemptData().slice(0,6);
+  if (!attempts.length) {
+    log.innerHTML = '<div class="attempt-empty">還沒有暫存紀錄。完成一段練習後，可以按「暫存本次成績」。</div>';
+    return;
+  }
+  log.innerHTML = attempts.map(entry => `<div class="attempt-row"><span class="attempt-main"><b>${escapeHtml(entry.name)}・${escapeHtml(entry.modeName)}</b><small>${escapeHtml(entry.article)}・${escapeHtml(entry.progress)}・${escapeHtml(entry.status)}・${escapeHtml(entry.date)}</small></span><strong class="attempt-score">${Number(entry.score).toLocaleString()}</strong><span class="attempt-accuracy">${entry.accuracy}%</span></div>`).join('');
 }
 function showToast(text) { const el=$('toast'); el.textContent=text; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1800); }
 
@@ -398,10 +471,11 @@ document.addEventListener('keydown', event => {
 document.querySelectorAll('.mode-tab').forEach(button => button.addEventListener('click', () => chooseMode(button.dataset.mode)));
 document.querySelectorAll('.board-tabs button').forEach(button => button.addEventListener('click', () => renderLeaderboard(button.dataset.board)));
 $('savePlayer').addEventListener('click',savePlayerName);
+$('saveAttempt').addEventListener('click',saveAttemptSnapshot);
 $('playerName').addEventListener('keydown',event => { if (event.key === 'Enter') { event.preventDefault(); savePlayerName(); $('playerName').blur(); } });
 $('rankJump').addEventListener('click',() => $('leaderboardSection').scrollIntoView({behavior:'smooth',block:'start'}));
 
-buildKeyboard(); buildFingerGuide(); buildPassage(); chooseMode('basic',false); renderLeaderboard('basic');
+buildKeyboard(); buildFingerGuide(); buildPassage(); chooseMode('basic',false); renderLeaderboard('basic'); renderAttemptLog();
 try {
   const savedPlayer = localStorage.getItem(playerStorageKey);
   if (savedPlayer) { $('playerName').value = savedPlayer; $('playerGreeting').textContent = `${savedPlayer}，歡迎回來！繼續挑戰最高分吧。`; }

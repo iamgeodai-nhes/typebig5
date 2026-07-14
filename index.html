@@ -51,6 +51,7 @@
         <button id="savePlayer" type="button">加入比賽</button>
       </div>
       <p id="playerGreeting">輸入名字後，每次成績都會加入排行榜。</p>
+      <button class="save-attempt" id="saveAttempt" type="button">暫存本次成績</button>
       <button class="rank-jump" id="rankJump" type="button">查看排行榜 ↓</button>
     </section>
 
@@ -98,6 +99,7 @@
             <div class="focus-character" id="focusCharacter">清</div>
             <div class="focus-bopomofo" id="focusBopomofo"></div>
             <p id="focusHint">依序輸入完整注音</p>
+            <div class="article-feedback" id="articleFeedback">準備開始！</div>
           </div>
           <div class="advanced-cover" id="advancedCover">
             <span>進階任務</span>
@@ -154,6 +156,13 @@
         <div class="board-tabs"><button class="active" data-board="basic">基礎賽</button><button data-board="advanced">文章賽</button></div>
       </div>
       <div class="leaderboard" id="leaderboard"></div>
+      <div class="attempt-panel">
+        <div class="attempt-heading">
+          <h3>最近暫存紀錄</h3>
+          <span>含日期與時間</span>
+        </div>
+        <div class="attempt-log" id="attemptLog"></div>
+      </div>
       <p class="board-note">排行榜目前儲存在這台電腦的瀏覽器中，適合同一間教室輪流挑戰。</p>
     </section>
 
