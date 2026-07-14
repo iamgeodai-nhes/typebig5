@@ -152,7 +152,7 @@
 
     <section class="leaderboard-section" id="leaderboardSection">
       <div class="section-heading">
-        <div><p class="kicker">CLASS CHALLENGE</p><h2>本機挑戰排行榜</h2></div>
+        <div><p class="kicker">CLASS CHALLENGE</p><h2>雲端挑戰排行榜</h2></div>
         <div class="board-tabs"><button class="active" data-board="basic">基礎賽</button><button data-board="advanced">文章賽</button></div>
       </div>
       <div class="leaderboard" id="leaderboard"></div>
@@ -163,7 +163,7 @@
         </div>
         <div class="attempt-log" id="attemptLog"></div>
       </div>
-      <p class="board-note">排行榜目前儲存在這台電腦的瀏覽器中，適合同一間教室輪流挑戰。</p>
+      <p class="board-note">排行榜與暫存紀錄會同步到雲端；網路不穩時會先暫存在這台電腦。</p>
     </section>
 
     <section class="finger-guide">
@@ -177,6 +177,19 @@
   </main>
 
   <div class="toast" id="toast"></div>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+  <script>
+    window.bopomofoFirebaseConfig = {
+      apiKey: "AIzaSyBn-eRwRSLFB7rAHCs3GXLkaoXlqpI6ZJM",
+      authDomain: "nhes-92044.firebaseapp.com",
+      projectId: "nhes-92044",
+      storageBucket: "nhes-92044.firebasestorage.app",
+      messagingSenderId: "447984269180",
+      appId: "1:447984269180:web:7365b21b97bd49e41cd6f9",
+      measurementId: "G-K345DSNJYW"
+    };
+  </script>
   <script src="articles.js"></script>
   <script src="app.js"></script>
 </body>

@@ -36,6 +36,9 @@ let memoryAttempts = [];
 let activeBoard = 'basic';
 let article = [];
 let currentArticleMeta = null;
+let cloudDb = null;
+let cloudOnline = false;
+let cloudWarned = false;
 
 function key(value) { return { value, label:value.toUpperCase(), bpmf:keyMap[value], size:1 }; }
 function spec(value,label,size=1) { return { value,label,size,special:true }; }
@@ -54,28 +57,73 @@ function prepareArticle(meta) {
   return tokens;
 }
 
+function initCloudDatabase() {
+  if (!window.firebase || !window.bopomofoFirebaseConfig) return null;
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(window.bopomofoFirebaseConfig);
+    return firebase.firestore();
+  } catch (error) {
+    console.warn('Firebase 初始化失敗', error);
+    return null;
+  }
+}
+
 function completedArticleIds() {
+  const owner = completionOwner();
+  let localCompleted = [];
   try {
     const records = JSON.parse(localStorage.getItem(completionStorageKey) || '{}');
-    const saved = new Set(records[completionOwner()] || []);
-    return new Set([...saved].filter(id => articleLibrary.some(articleItem => articleItem.id === id)));
-  } catch { return new Set(memoryCompletedArticles[completionOwner()] || []); }
+    localCompleted = Array.isArray(records[owner]) ? records[owner] : [];
+  } catch { /* file:// fallback */ }
+  const cloudCompleted = Array.isArray(memoryCompletedArticles[owner]) ? memoryCompletedArticles[owner] : [];
+  const saved = new Set([...localCompleted, ...cloudCompleted]);
+  return new Set([...saved].filter(id => articleLibrary.some(articleItem => articleItem.id === id)));
 }
 
 function completionOwner() { return playerName().toLocaleLowerCase('zh-TW') || '__尚未命名__'; }
 
 function leaderboardData() {
+  let localBoards = { basic:[], advanced:[] };
   try {
     const saved = JSON.parse(localStorage.getItem(leaderboardStorageKey) || '{}');
-    return { basic:Array.isArray(saved.basic) ? saved.basic : [], advanced:Array.isArray(saved.advanced) ? saved.advanced : [] };
-  } catch { return memoryLeaderboard; }
+    localBoards = { basic:Array.isArray(saved.basic) ? saved.basic : [], advanced:Array.isArray(saved.advanced) ? saved.advanced : [] };
+  } catch { /* file:// fallback */ }
+  return mergeLeaderboards(localBoards, memoryLeaderboard);
 }
 
 function attemptData() {
+  let localAttempts = [];
   try {
     const saved = JSON.parse(localStorage.getItem(attemptStorageKey) || '[]');
-    return Array.isArray(saved) ? saved : [];
-  } catch { return memoryAttempts; }
+    localAttempts = Array.isArray(saved) ? saved : [];
+  } catch { /* file:// fallback */ }
+  return mergeAttempts(memoryAttempts, localAttempts);
+}
+
+function mergeLeaderboards(...boardsList) {
+  const merged = { basic:[], advanced:[] };
+  ['basic','advanced'].forEach(mode => {
+    const bestByPlayer = new Map();
+    boardsList.flatMap(boards => Array.isArray(boards?.[mode]) ? boards[mode] : []).forEach(entry => {
+      if (!entry?.name) return;
+      const key = entry.name.toLocaleLowerCase('zh-TW');
+      const previous = bestByPlayer.get(key);
+      if (!previous || entry.score > previous.score || (entry.score === previous.score && entry.accuracy > previous.accuracy)) bestByPlayer.set(key, entry);
+    });
+    merged[mode] = [...bestByPlayer.values()].sort((a,b) => b.score-a.score || b.accuracy-a.accuracy).slice(0,10);
+  });
+  return merged;
+}
+
+function mergeAttempts(...attemptLists) {
+  const seen = new Set();
+  return attemptLists.flat().filter(entry => {
+    if (!entry?.name) return false;
+    const key = [entry.name, entry.mode, entry.score, entry.accuracy, entry.article, entry.date].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a,b) => Date.parse(b.date || '') - Date.parse(a.date || '')).slice(0,30);
 }
 
 function playerName() { return $('playerName').value.trim().slice(0,10); }
@@ -85,6 +133,10 @@ function savePlayerName(announce=true) {
   if (!name) { $('playerName').focus(); showToast('先輸入挑戰者名字喔！'); return false; }
   try { localStorage.setItem(playerStorageKey,name); } catch { /* file:// fallback */ }
   $('playerGreeting').textContent = `${name}，準備好挑戰自己的最高分了嗎？`;
+  loadCompletedArticlesFromCloud(name).then(() => {
+    updateArticleProgress();
+    if (state.mode === 'advanced' && !state.running && state.articleOwner !== completionOwner()) selectRandomArticle();
+  });
   if (state.mode === 'advanced' && !state.running && state.articleOwner !== completionOwner()) selectRandomArticle();
   if (announce) showToast(`挑戰者「${name}」已就位！`); return true;
 }
@@ -99,6 +151,7 @@ function recordLeaderboardScore(mode) {
   boards[mode].sort((a,b) => b.score-a.score || b.accuracy-a.accuracy); boards[mode] = boards[mode].slice(0,10); memoryLeaderboard = boards;
   try { localStorage.setItem(leaderboardStorageKey,JSON.stringify(boards)); } catch { /* file:// fallback */ }
   renderLeaderboard(activeBoard);
+  saveLeaderboardScoreToCloud(mode, boards[mode].find(entry => entry.name.toLocaleLowerCase('zh-TW') === name.toLocaleLowerCase('zh-TW')));
 }
 
 function renderLeaderboard(mode=activeBoard) {
@@ -116,6 +169,145 @@ function saveCompletedArticle(id) {
   try { records = JSON.parse(localStorage.getItem(completionStorageKey) || '{}'); } catch { /* file:// fallback */ }
   records[completionOwner()] = [...completed]; memoryCompletedArticles = records;
   try { localStorage.setItem(completionStorageKey, JSON.stringify(records)); } catch { /* file:// fallback */ }
+  saveCompletedArticleToCloud(id);
+}
+
+async function loadLeaderboardFromCloud() {
+  if (!cloudDb) return;
+  try {
+    const snapshot = await cloudDb.collection('leaderboard').orderBy('score','desc').limit(40).get();
+    const boards = { basic:[], advanced:[] };
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      const mode = data.mode === 'advanced' ? 'advanced' : 'basic';
+      boards[mode].push({
+        name:data.name || '未命名',
+        score:Number(data.score || 0),
+        accuracy:Number(data.accuracy || 0),
+        article:data.articleTitle || '',
+        date:cloudDateLabel(data.updatedAt)
+      });
+    });
+    boards.basic = boards.basic.slice(0,10);
+    boards.advanced = boards.advanced.slice(0,10);
+    memoryLeaderboard = mergeLeaderboards(memoryLeaderboard, boards);
+    cloudOnline = true;
+    renderLeaderboard(activeBoard);
+  } catch (error) {
+    warnCloud('雲端排行榜讀取失敗，先使用本機資料。', error);
+  }
+}
+
+async function saveLeaderboardScoreToCloud(mode, entry) {
+  if (!cloudDb || !entry) return;
+  try {
+    await cloudDb.collection('leaderboard').doc(`${mode}_${safeDocId(entry.name)}`).set({
+      name:entry.name,
+      mode,
+      score:Number(entry.score || 0),
+      accuracy:Number(entry.accuracy || 0),
+      articleTitle:entry.article || '',
+      updatedAt:cloudTimestamp()
+    }, { merge:true });
+    cloudOnline = true;
+    loadLeaderboardFromCloud();
+  } catch (error) {
+    warnCloud('雲端排行榜寫入失敗，這次先存本機。', error);
+  }
+}
+
+async function loadAttemptsFromCloud() {
+  if (!cloudDb) return;
+  try {
+    const snapshot = await cloudDb.collection('attempts').orderBy('createdAt','desc').limit(30).get();
+    memoryAttempts = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        name:data.name || '未命名',
+        mode:data.mode || 'basic',
+        modeName:data.mode === 'advanced' ? '文章挑戰' : '基礎練習',
+        score:Number(data.score || 0),
+        accuracy:Number(data.accuracy || 0),
+        article:data.articleTitle || '',
+        progress:data.progress || '',
+        status:data.status || '',
+        date:cloudDateLabel(data.createdAt)
+      };
+    });
+    cloudOnline = true;
+    renderAttemptLog();
+  } catch (error) {
+    warnCloud('雲端暫存紀錄讀取失敗，先使用本機資料。', error);
+  }
+}
+
+async function saveAttemptToCloud(entry) {
+  if (!cloudDb || !entry) return;
+  try {
+    await cloudDb.collection('attempts').add({
+      name:entry.name,
+      mode:entry.mode,
+      score:Number(entry.score || 0),
+      accuracy:Number(entry.accuracy || 0),
+      articleTitle:entry.article || '',
+      progress:entry.progress || '',
+      status:entry.status || '',
+      createdAt:cloudTimestamp()
+    });
+    cloudOnline = true;
+    loadAttemptsFromCloud();
+  } catch (error) {
+    warnCloud('雲端暫存失敗，這次先存本機。', error);
+  }
+}
+
+async function loadCompletedArticlesFromCloud(name=playerName()) {
+  if (!cloudDb || !name) return;
+  const owner = name.trim().toLocaleLowerCase('zh-TW');
+  if (!owner) return;
+  try {
+    const snapshot = await cloudDb.collection('article_progress').where('name','==',owner).get();
+    const completed = [];
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (data.articleId) completed.push(data.articleId);
+    });
+    memoryCompletedArticles[owner] = completed;
+    cloudOnline = true;
+  } catch (error) {
+    warnCloud('雲端文章進度讀取失敗，先使用本機資料。', error);
+  }
+}
+
+async function saveCompletedArticleToCloud(id) {
+  if (!cloudDb || !id || !currentArticleMeta) return;
+  const owner = completionOwner();
+  if (owner === '__尚未命名__') return;
+  try {
+    await cloudDb.collection('article_progress').doc(`${safeDocId(owner)}_${safeDocId(id)}`).set({
+      name:owner,
+      articleId:id,
+      articleTitle:currentArticleMeta.title,
+      accuracy:accuracyNumber(),
+      completedAt:cloudTimestamp()
+    }, { merge:true });
+    cloudOnline = true;
+  } catch (error) {
+    warnCloud('雲端文章完成紀錄寫入失敗，這次先存本機。', error);
+  }
+}
+
+async function resetArticleHistoryInCloud(owner=completionOwner()) {
+  if (!cloudDb || owner === '__尚未命名__') return;
+  try {
+    const snapshot = await cloudDb.collection('article_progress').where('name','==',owner).get();
+    const batch = cloudDb.batch();
+    snapshot.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    cloudOnline = true;
+  } catch (error) {
+    warnCloud('雲端完成紀錄清除失敗，可能是 Firestore 規則尚未允許刪除。', error);
+  }
 }
 
 function updateArticleProgress() {
@@ -364,10 +556,12 @@ function finishRound() {
 }
 
 function resetArticleHistory() {
+  const owner = completionOwner();
   let records = memoryCompletedArticles;
   try { records = JSON.parse(localStorage.getItem(completionStorageKey) || '{}'); } catch { /* file:// fallback */ }
-  delete records[completionOwner()]; memoryCompletedArticles = records;
+  delete records[owner]; memoryCompletedArticles = records;
   try { localStorage.setItem(completionStorageKey,JSON.stringify(records)); } catch { /* file:// fallback */ }
+  resetArticleHistoryInCloud(owner);
   state.allArticlesComplete = false; state.needsNewArticle = true;
   $('advancedCover').querySelector('h2').textContent = '新的 30 篇挑戰開始！';
   $('advancedCover').querySelector('p').textContent = '完成紀錄已清除，按空白鍵隨機抽出第一篇。';
@@ -384,7 +578,7 @@ function saveAttemptSnapshot() {
   const totalChars = state.mode === 'advanced' ? articleTotalCount() : null;
   const progress = state.mode === 'advanced' ? `${completedChars} / ${totalChars} 字` : `接住 ${state.correct} 個`;
   const status = state.running ? (state.paused ? '暫停中' : '進行中') : '已完成';
-  attempts.unshift({
+  const entry = {
     name,
     mode:state.mode,
     modeName,
@@ -394,10 +588,12 @@ function saveAttemptSnapshot() {
     progress,
     status,
     date:formatDateTime()
-  });
+  };
+  attempts.unshift(entry);
   memoryAttempts = attempts.slice(0,30);
   try { localStorage.setItem(attemptStorageKey,JSON.stringify(memoryAttempts)); } catch { /* file:// fallback */ }
   renderAttemptLog();
+  saveAttemptToCloud(entry);
   showToast('已暫存本次成績與時間');
   return true;
 }
@@ -414,6 +610,22 @@ function formatTime(seconds) { return `${String(Math.floor(seconds/60)).padStart
 function formatDateTime(date=new Date()) { return date.toLocaleString('zh-TW',{ year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false }); }
 function articleCompletedCount() { return Math.max(0, article.slice(0,state.articleIndex).filter(item => !item.punctuation).length); }
 function articleTotalCount() { return article.filter(item => !item.punctuation).length; }
+function safeDocId(value) { return encodeURIComponent(String(value).trim().toLocaleLowerCase('zh-TW')).replace(/\./g,'%2E'); }
+function cloudTimestamp() { return window.firebase?.firestore?.FieldValue?.serverTimestamp ? firebase.firestore.FieldValue.serverTimestamp() : new Date(); }
+function cloudDateLabel(value) {
+  if (!value) return formatDateTime();
+  if (typeof value.toDate === 'function') return formatDateTime(value.toDate());
+  if (value instanceof Date) return formatDateTime(value);
+  if (typeof value === 'string') return value;
+  return formatDateTime();
+}
+function warnCloud(message,error) {
+  console.warn(message,error);
+  if (!cloudWarned) {
+    cloudWarned = true;
+    showToast(message);
+  }
+}
 function randomPraise(perfect=false) { const words = perfect ? ['神準命中！','完美到發光！','超級漂亮！'] : ['太強啦！','手速王！','你做到了！','繼續連擊！']; return words[Math.floor(Math.random()*words.length)]; }
 function randomEncouragement() { const words = ['沒關係，再試一次！','差一點點，你可以！','看準發光鍵，再來！','別放棄，下一次會中！']; return words[Math.floor(Math.random()*words.length)]; }
 function showFeedback(text,good) {
@@ -475,8 +687,19 @@ $('saveAttempt').addEventListener('click',saveAttemptSnapshot);
 $('playerName').addEventListener('keydown',event => { if (event.key === 'Enter') { event.preventDefault(); savePlayerName(); $('playerName').blur(); } });
 $('rankJump').addEventListener('click',() => $('leaderboardSection').scrollIntoView({behavior:'smooth',block:'start'}));
 
+cloudDb = initCloudDatabase();
 buildKeyboard(); buildFingerGuide(); buildPassage(); chooseMode('basic',false); renderLeaderboard('basic'); renderAttemptLog();
+loadLeaderboardFromCloud();
+loadAttemptsFromCloud();
 try {
   const savedPlayer = localStorage.getItem(playerStorageKey);
-  if (savedPlayer) { $('playerName').value = savedPlayer; $('playerGreeting').textContent = `${savedPlayer}，歡迎回來！繼續挑戰最高分吧。`; }
+  if (savedPlayer) {
+    $('playerName').value = savedPlayer;
+    $('playerGreeting').textContent = `${savedPlayer}，歡迎回來！正在同步雲端進度。`;
+    loadCompletedArticlesFromCloud(savedPlayer).then(() => {
+      updateArticleProgress();
+      if (state.mode === 'advanced') selectRandomArticle();
+      $('playerGreeting').textContent = `${savedPlayer}，歡迎回來！繼續挑戰最高分吧。`;
+    });
+  }
 } catch { /* file:// fallback */ }
