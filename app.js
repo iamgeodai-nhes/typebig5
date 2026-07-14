@@ -37,6 +37,9 @@ let activeBoard = 'basic';
 let article = [];
 let currentArticleMeta = null;
 let cloudDb = null;
+let cloudAuth = null;
+let cloudUser = null;
+let cloudReady = Promise.resolve();
 let cloudOnline = false;
 let cloudWarned = false;
 
@@ -57,10 +60,13 @@ function prepareArticle(meta) {
   return tokens;
 }
 
-function initCloudDatabase() {
+async function initCloudDatabase() {
   if (!window.firebase || !window.bopomofoFirebaseConfig) return null;
   try {
     if (!firebase.apps.length) firebase.initializeApp(window.bopomofoFirebaseConfig);
+    cloudAuth = firebase.auth();
+    const credential = await cloudAuth.signInAnonymously();
+    cloudUser = credential.user;
     return firebase.firestore();
   } catch (error) {
     console.warn('Firebase 初始化失敗', error);
@@ -199,11 +205,12 @@ async function loadLeaderboardFromCloud() {
 }
 
 async function saveLeaderboardScoreToCloud(mode, entry) {
-  if (!cloudDb || !entry) return;
+  if (!cloudDb || !cloudUser || !entry) return;
   try {
-    await cloudDb.collection('leaderboard').doc(`${mode}_${safeDocId(entry.name)}`).set({
+    await cloudDb.collection('leaderboard').doc(`${mode}_${cloudUser.uid}`).set({
       name:entry.name,
       mode,
+      uid:cloudUser.uid,
       score:Number(entry.score || 0),
       accuracy:Number(entry.accuracy || 0),
       articleTitle:entry.article || '',
@@ -217,9 +224,13 @@ async function saveLeaderboardScoreToCloud(mode, entry) {
 }
 
 async function loadAttemptsFromCloud() {
-  if (!cloudDb) return;
+  if (!cloudDb || !cloudUser) return;
   try {
-    const snapshot = await cloudDb.collection('attempts').orderBy('createdAt','desc').limit(30).get();
+    const snapshot = await cloudDb.collection('attempts')
+      .where('uid','==',cloudUser.uid)
+      .orderBy('createdAt','desc')
+      .limit(30)
+      .get();
     memoryAttempts = snapshot.docs.map(doc => {
       const data = doc.data();
       return {
@@ -242,9 +253,10 @@ async function loadAttemptsFromCloud() {
 }
 
 async function saveAttemptToCloud(entry) {
-  if (!cloudDb || !entry) return;
+  if (!cloudDb || !cloudUser || !entry) return;
   try {
     await cloudDb.collection('attempts').add({
+      uid:cloudUser.uid,
       name:entry.name,
       mode:entry.mode,
       score:Number(entry.score || 0),
@@ -262,11 +274,13 @@ async function saveAttemptToCloud(entry) {
 }
 
 async function loadCompletedArticlesFromCloud(name=playerName()) {
-  if (!cloudDb || !name) return;
+  if (!cloudDb || !cloudUser || !name) return;
   const owner = name.trim().toLocaleLowerCase('zh-TW');
   if (!owner) return;
   try {
-    const snapshot = await cloudDb.collection('article_progress').where('name','==',owner).get();
+    const snapshot = await cloudDb.collection('article_progress')
+      .where('uid','==',cloudUser.uid)
+      .get();
     const completed = [];
     snapshot.forEach(doc => {
       const data = doc.data();
@@ -280,11 +294,12 @@ async function loadCompletedArticlesFromCloud(name=playerName()) {
 }
 
 async function saveCompletedArticleToCloud(id) {
-  if (!cloudDb || !id || !currentArticleMeta) return;
+  if (!cloudDb || !cloudUser || !id || !currentArticleMeta) return;
   const owner = completionOwner();
   if (owner === '__尚未命名__') return;
   try {
-    await cloudDb.collection('article_progress').doc(`${safeDocId(owner)}_${safeDocId(id)}`).set({
+    await cloudDb.collection('article_progress').doc(`${cloudUser.uid}_${safeDocId(id)}`).set({
+      uid:cloudUser.uid,
       name:owner,
       articleId:id,
       articleTitle:currentArticleMeta.title,
@@ -298,9 +313,11 @@ async function saveCompletedArticleToCloud(id) {
 }
 
 async function resetArticleHistoryInCloud(owner=completionOwner()) {
-  if (!cloudDb || owner === '__尚未命名__') return;
+  if (!cloudDb || !cloudUser || owner === '__尚未命名__') return;
   try {
-    const snapshot = await cloudDb.collection('article_progress').where('name','==',owner).get();
+    const snapshot = await cloudDb.collection('article_progress')
+      .where('uid','==',cloudUser.uid)
+      .get();
     const batch = cloudDb.batch();
     snapshot.forEach(doc => batch.delete(doc.ref));
     await batch.commit();
@@ -687,16 +704,24 @@ $('saveAttempt').addEventListener('click',saveAttemptSnapshot);
 $('playerName').addEventListener('keydown',event => { if (event.key === 'Enter') { event.preventDefault(); savePlayerName(); $('playerName').blur(); } });
 $('rankJump').addEventListener('click',() => $('leaderboardSection').scrollIntoView({behavior:'smooth',block:'start'}));
 
-cloudDb = initCloudDatabase();
-buildKeyboard(); buildFingerGuide(); buildPassage(); chooseMode('basic',false); renderLeaderboard('basic'); renderAttemptLog();
-loadLeaderboardFromCloud();
-loadAttemptsFromCloud();
+  cloudReady = initCloudDatabase().then(db => {
+    cloudDb = db;
+    if (!cloudDb) return;
+    loadLeaderboardFromCloud();
+    loadAttemptsFromCloud();
+    const savedName = playerName();
+    if (savedName) loadCompletedArticlesFromCloud(savedName).then(() => {
+      updateArticleProgress();
+      if (state.mode === 'advanced' && !state.running) selectRandomArticle();
+    });
+  });
+  buildKeyboard(); buildFingerGuide(); buildPassage(); chooseMode('basic',false); renderLeaderboard('basic'); renderAttemptLog();
 try {
   const savedPlayer = localStorage.getItem(playerStorageKey);
   if (savedPlayer) {
     $('playerName').value = savedPlayer;
     $('playerGreeting').textContent = `${savedPlayer}，歡迎回來！正在同步雲端進度。`;
-    loadCompletedArticlesFromCloud(savedPlayer).then(() => {
+    cloudReady.then(() => loadCompletedArticlesFromCloud(savedPlayer)).then(() => {
       updateArticleProgress();
       if (state.mode === 'advanced') selectRandomArticle();
       $('playerGreeting').textContent = `${savedPlayer}，歡迎回來！繼續挑戰最高分吧。`;

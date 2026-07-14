@@ -1,0 +1,116 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function validName(data) {
+      return data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 10;
+    }
+
+    function validMode(data) {
+      return data.mode == 'basic' || data.mode == 'advanced';
+    }
+
+    function validScore(data) {
+      return data.score is int
+        && data.score >= 0
+        && data.score <= 100000
+        && data.accuracy is int
+        && data.accuracy >= 0
+        && data.accuracy <= 100;
+    }
+
+    match /leaderboard/{documentId} {
+      // 排行榜是公開展示資料；寫入只能修改自己的 UID 文件。
+      allow read: if true;
+      allow create: if signedIn()
+        && documentId == request.resource.data.mode + '_' + request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && validName(request.resource.data)
+        && validMode(request.resource.data)
+        && validScore(request.resource.data)
+        && request.resource.data.articleTitle is string
+        && request.resource.data.articleTitle.size() <= 100
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.keys().hasOnly([
+          'name', 'mode', 'uid', 'score', 'accuracy', 'articleTitle', 'updatedAt'
+        ]);
+      allow update: if signedIn()
+        && documentId == request.resource.data.mode + '_' + request.auth.uid
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && validName(request.resource.data)
+        && validMode(request.resource.data)
+        && validScore(request.resource.data)
+        && request.resource.data.articleTitle is string
+        && request.resource.data.articleTitle.size() <= 100
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.keys().hasOnly([
+          'name', 'mode', 'uid', 'score', 'accuracy', 'articleTitle', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /attempts/{documentId} {
+      // 練習紀錄不再公開列出，只能由建立它的匿名使用者讀取。
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && validName(request.resource.data)
+        && validMode(request.resource.data)
+        && validScore(request.resource.data)
+        && request.resource.data.articleTitle is string
+        && request.resource.data.articleTitle.size() <= 100
+        && request.resource.data.progress is string
+        && request.resource.data.progress.size() <= 50
+        && request.resource.data.status is string
+        && request.resource.data.status.size() <= 20
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'mode', 'score', 'accuracy', 'articleTitle',
+          'progress', 'status', 'createdAt'
+        ]);
+      allow update, delete: if false;
+    }
+
+    match /article_progress/{documentId} {
+      // 文章進度只允許本人查詢、建立、修改與刪除。
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && validName(request.resource.data)
+        && request.resource.data.articleId is string
+        && request.resource.data.articleId.size() <= 100
+        && request.resource.data.articleTitle is string
+        && request.resource.data.articleTitle.size() <= 100
+        && request.resource.data.accuracy is int
+        && request.resource.data.accuracy >= 0
+        && request.resource.data.accuracy <= 100
+        && request.resource.data.completedAt is timestamp
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'articleId', 'articleTitle', 'accuracy', 'completedAt'
+        ]);
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && validName(request.resource.data)
+        && request.resource.data.articleId is string
+        && request.resource.data.articleId.size() <= 100
+        && request.resource.data.articleTitle is string
+        && request.resource.data.articleTitle.size() <= 100
+        && request.resource.data.accuracy is int
+        && request.resource.data.accuracy >= 0
+        && request.resource.data.accuracy <= 100
+        && request.resource.data.completedAt is timestamp
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'articleId', 'articleTitle', 'accuracy', 'completedAt'
+        ]);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+  }
+}
